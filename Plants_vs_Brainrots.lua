@@ -2377,6 +2377,556 @@ local MissionBrainrotKillAuraToggle = EventTab:Toggle({
 
 EventTab:Section("Merge Madness Event")
 
+-- Safe helpers + patched Merge Madness Event and Auto XP handlers
+-- ใช้แทนส่วน EventTab:Section("Merge Madness Event") ... จนถึง AutoResetMergeMadnessEvent ในสคริปเดิม
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+
+-- Positions (ของเดิม)
+local CFrame_Pos1 = CFrame.new(-184.19, 11.76, 1026.13)
+local CFrame_Pos2 = CFrame.new(-173.69, 11.76, 1026.09)
+local CFrame_Mix  = CFrame.new(-194.42, 11.76, 1027.23)
+local CFrame_XP   = CFrame.new(-151.39, 11.76, 1028.88)
+
+-- Global flags
+_G.CycleStep = "FindPair"
+_G.CyclePair_B = nil
+_G.ToolA_ModelName = nil
+_G.ToolB_ModelName = nil
+_G.FavoriteOnly = false
+local usedMutations = {}
+
+-- Safe getters
+local function safePlayerGui()
+    if not LocalPlayer then return nil end
+    return LocalPlayer:FindFirstChild("PlayerGui")
+end
+
+local function getProximityActionText()
+    local pg = safePlayerGui()
+    if not pg then return nil end
+    local prox = pg:FindFirstChild("ProximityPrompts", true)
+    if not prox then return nil end
+    local def = prox:FindFirstChild("Default")
+    if not def then return nil end
+    local pf = def:FindFirstChild("PromptFrame")
+    if not pf then return nil end
+    local action = pf:FindFirstChild("ActionText")
+    if action and action:IsA("TextLabel") then
+        return action.Text
+    end
+    return nil
+end
+
+-- Find nearest enabled ProximityPrompt within MaxActivationDistance of rootPart
+local function findPromptForRoot(rootPart)
+    if not rootPart then return nil end
+    local closest = nil
+    local closestDist = math.huge
+    for _, inst in ipairs(Workspace:GetDescendants()) do
+        if inst:IsA("ProximityPrompt") and inst.Enabled then
+            local parentPart = inst.Parent
+            if parentPart and parentPart:IsA("BasePart") then
+                local dist = (parentPart.Position - rootPart.Position).Magnitude
+                if dist <= inst.MaxActivationDistance and dist < closestDist then
+                    closest = inst
+                    closestDist = dist
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function safeInputHold(prompt)
+    if not prompt or not prompt:IsA("ProximityPrompt") then return false end
+    local ok, err = pcall(function()
+        prompt:InputHoldBegin()
+        task.wait(prompt.HoldDuration or 0.5)
+        prompt:InputHoldEnd()
+    end)
+    return ok
+end
+
+-- Make isToolFavorited robust (many UI paths may be nil)
+local function isToolFavorited(tool)
+    if not tool then return false end
+    local playerGui = safePlayerGui()
+    if not playerGui then return false end
+    local hotbarSlots = UserInputService.TouchEnabled and 6 or 10
+
+    local hotbar = nil
+    -- Try several common paths that UIs might be under
+    local backpackGui = playerGui:FindFirstChild("BackpackGui", true) or playerGui:FindFirstChild("BackpackGui")
+    if backpackGui and backpackGui:FindFirstChild("Backpack") then
+        hotbar = backpackGui.Backpack:FindFirstChild("Hotbar")
+    else
+        -- fallback: direct find (older/newer UI structures)
+        pcall(function()
+            hotbar = playerGui.BackpackGui and playerGui.BackpackGui.Backpack and playerGui.BackpackGui.Backpack:FindFirstChild("Hotbar")
+        end)
+    end
+
+    if hotbar then
+        for i = 1, hotbarSlots do
+            local slot = hotbar:FindFirstChild(tostring(i))
+            local toolNameLabel = slot and slot:FindFirstChild("ToolName")
+            if toolNameLabel and toolNameLabel.Text ~= "" and toolNameLabel.Text == tool.Name then
+                if slot:FindFirstChild("HeartIcon") then return true end
+            end
+        end
+    end
+
+    local inventoryFrame = nil
+    if backpackGui and backpackGui.Backpack then
+        pcall(function()
+            inventoryFrame = backpackGui.Backpack.Inventory and backpackGui.Backpack.Inventory.ScrollingFrame and backpackGui.Backpack.Inventory.ScrollingFrame:FindFirstChild("UIGridFrame")
+        end)
+    end
+
+    if inventoryFrame then
+        for _, itemSlot in ipairs(inventoryFrame:GetChildren()) do
+            if itemSlot:IsA("TextButton") then
+                local toolNameLabel = itemSlot:FindFirstChild("ToolName")
+                if toolNameLabel and toolNameLabel.Text ~= "" and toolNameLabel.Text == tool.Name then
+                    if itemSlot:FindFirstChild("HeartIcon") then return true end
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- Safe GetToolInfo: blacklist may be nil
+local function GetToolInfo(tool, blacklist)
+    if not tool or not tool:IsA("Tool") then return nil end
+    blacklist = blacklist or {}
+
+    local isFavorite = isToolFavorited(tool)
+    if _G.FavoriteOnly then
+        if not isFavorite then return nil end
+    else
+        if isFavorite then return nil end
+    end
+
+    if string.find(tool.Name, "-") then
+        return nil
+    end
+
+    -- BaseName extraction: last space-separated token
+    local BaseName = string.match(tool.Name, "([^ ]+)$")
+    if not BaseName then return nil end
+
+    local Model = tool:FindFirstChild(BaseName)
+    if not (Model and Model:IsA("Model")) then return nil end
+
+    local MutationAtt = Model:GetAttribute("Mutation")
+    if not (MutationAtt ~= nil and MutationAtt ~= "") then
+        return nil
+    end
+
+    if blacklist[MutationAtt] then
+        return nil
+    end
+
+    return { Tool = tool, ModelName = Model.Name, Mutation = MutationAtt }
+end
+
+-- Patched CheckAndFirePrompt
+local function CheckAndFirePrompt(humanoid, rootPart, expectedText, toolInfo)
+    if not rootPart or not humanoid then return false end
+
+    local actionText = getProximityActionText()
+    if not (actionText and actionText == expectedText) then
+        return false
+    end
+
+    -- find a prompt near rootPart
+    local prompt = findPromptForRoot(rootPart)
+    if not prompt then
+        return false
+    end
+
+    while _G.AutoMutateActive do
+        local ok = safeInputHold(prompt)
+        if not ok then
+            return false
+        end
+
+        local success = false
+        local startTime = tick()
+        -- verify change: tool removed from character (if placing) OR prompt disabled
+        while tick() - startTime < 3 do
+            if not _G.AutoMutateActive then return false end
+
+            if toolInfo then
+                local parent = humanoid.Parent
+                if parent and not parent:FindFirstChild(toolInfo.Tool.Name) then
+                    success = true
+                    break
+                end
+            else
+                if not prompt.Enabled then
+                    success = true
+                    break
+                end
+            end
+            task.wait(0.1)
+        end
+
+        if success then
+            return true
+        else
+            -- try again (loop continues)
+        end
+    end
+
+    return false
+end
+
+-- CheckMachineModels unchanged but safe
+local function CheckMachineModels(modelNameA, modelNameB)
+    local MutationMachine = Workspace:FindFirstChild("ScriptedMap") and Workspace.ScriptedMap:FindFirstChild("MutationMachine")
+    if MutationMachine and modelNameA and modelNameB then
+        local foundA = MutationMachine:FindFirstChild(modelNameA)
+        local foundB = MutationMachine:FindFirstChild(modelNameB)
+        if (foundA and foundA:IsA("Model")) and (foundB and foundB:IsA("Model")) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Action performers: guard nils
+local function Perform_Action_A(infoA, humanoid, rootPart)
+    if not infoA or not humanoid or not rootPart then return end
+    pcall(function() humanoid:EquipTool(infoA.Tool) end)
+    task.wait(0.2)
+    rootPart.CFrame = CFrame_Pos1
+    task.wait(0.8)
+    CheckAndFirePrompt(humanoid, rootPart, "Place Plant or Brainrot", infoA)
+    task.wait(0.3)
+end
+
+local function Perform_Action_B(infoB, humanoid, rootPart)
+    if not infoB or not humanoid or not rootPart then return end
+    pcall(function() humanoid:EquipTool(infoB.Tool) end)
+    task.wait(0.2)
+    rootPart.CFrame = CFrame_Pos2
+    task.wait(0.8)
+    CheckAndFirePrompt(humanoid, rootPart, "Place Plant or Brainrot", infoB)
+    task.wait(0.3)
+end
+
+local function Perform_Action_Mix(humanoid, rootPart)
+    if not humanoid or not rootPart then return end
+    pcall(function() humanoid:UnequipTools() end)
+    task.wait(0.2)
+    rootPart.CFrame = CFrame_Mix
+    task.wait(0.8)
+    CheckAndFirePrompt(humanoid, rootPart, "Mix", nil)
+    task.wait(0.3)
+end
+
+-- Auto Mutate Toggle
+_G.AutoMutateActive = false
+
+local AutoMergeMadnessEventToggle = EventTab:Toggle({
+    Title = "Auto Merge Madness Event",
+    Desc = "Auto Event",
+    Default = false,
+    Flag = "AutoMutateToggle",
+    Callback = function(value)
+        _G.AutoMutateActive = value
+        if not _G.AutoMutateActive then
+            _G.CycleStep = "FindPair"
+            _G.CyclePair_B = nil
+            _G.ToolA_ModelName = nil
+            _G.ToolB_ModelName = nil
+            usedMutations = {}
+            return
+        end
+
+        _G.CycleStep = "FindPair"
+        _G.CyclePair_B = nil
+        _G.ToolA_ModelName = nil
+        _G.ToolB_ModelName = nil
+        usedMutations = {}
+
+        task.spawn(function()
+            while _G.AutoMutateActive do
+                local WaitTime = 1
+                local Character = LocalPlayer and LocalPlayer.Character
+                local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+                local HumanoidRootPart = Character and Character:FindFirstChild("HumanoidRootPart")
+
+                if not (Character and Humanoid and HumanoidRootPart and Humanoid.Health > 0) then
+                    task.wait(WaitTime)
+                    continue
+                end
+
+                local TimerLabel = nil
+                local ScriptedMap = Workspace:FindFirstChild("ScriptedMap")
+                local MutationMachine = ScriptedMap and ScriptedMap:FindFirstChild("MutationMachine")
+                local UI_Attachment = MutationMachine and MutationMachine:FindFirstChild("UI")
+                local GUI_Billboard = UI_Attachment and UI_Attachment:FindFirstChild("GUI")
+                if GUI_Billboard then TimerLabel = GUI_Billboard:FindFirstChild("Timer") end
+
+                local isMachineReady = false
+                if TimerLabel and TimerLabel:IsA("TextLabel") and TimerLabel.Text == "~ Mutate plants or brainrots! ~" then
+                    isMachineReady = true
+                end
+
+                if isMachineReady then
+                    WaitTime = 0.2
+
+                    if _G.CycleStep == "FindPair" then
+                        local validTools = {}
+                        local backpack = LocalPlayer and LocalPlayer:FindFirstChild("Backpack")
+                        local backpackTools = backpack and backpack:GetChildren() or {}
+
+                        for i = 1, #backpackTools do
+                            local info = GetToolInfo(backpackTools[i], usedMutations)
+                            if info then table.insert(validTools, info) end
+                        end
+
+                        local pairFound = false
+                        for i = 1, #validTools do
+                            local infoA = validTools[i]
+                            for j = i + 1, #validTools do
+                                local infoB = validTools[j]
+                                if infoA.ModelName == infoB.ModelName and infoA.Mutation ~= infoB.Mutation then
+                                    Perform_Action_A(infoA, Humanoid, HumanoidRootPart)
+                                    usedMutations[infoA.Mutation] = true
+                                    _G.CyclePair_B = infoB
+                                    _G.ToolA_ModelName = infoA.ModelName
+                                    _G.ToolB_ModelName = infoB.ModelName
+                                    _G.CycleStep = "PlaceB"
+                                    pairFound = true
+                                    break
+                                end
+                            end
+                            if pairFound then break end
+                        end
+
+                    elseif _G.CycleStep == "PlaceB" then
+                        if _G.CyclePair_B then
+                            Perform_Action_B(_G.CyclePair_B, Humanoid, HumanoidRootPart)
+                            usedMutations[_G.CyclePair_B.Mutation] = true
+                            _G.CyclePair_B = nil
+                            _G.CycleStep = "Mix"
+                        else
+                            _G.CycleStep = "FindPair"
+                        end
+
+                    elseif _G.CycleStep == "Mix" then
+                        if CheckMachineModels(_G.ToolA_ModelName, _G.ToolB_ModelName) then
+                            Perform_Action_Mix(Humanoid, HumanoidRootPart)
+                            _G.CycleStep = "WaitingForReset"
+                        else
+                            -- machine not prepared, back to FindPair to re-evaluate
+                            _G.CycleStep = "FindPair"
+                        end
+
+                    elseif _G.CycleStep == "WaitingForReset" then
+                        -- wait until machine resets (handled by machine timer check above)
+                    end
+
+                else
+                    if _G.CycleStep ~= "FindPair" then
+                        _G.CycleStep = "FindPair"
+                        _G.CyclePair_B = nil
+                        _G.ToolA_ModelName = nil
+                        _G.ToolB_ModelName = nil
+                        usedMutations = {}
+                    end
+                end
+
+                task.wait(WaitTime)
+            end
+        end)
+    end
+})
+
+-- Favorite-only toggle (keeps same)
+local FavoriteonlyMergeMadnessEventToggle = EventTab:Toggle({
+    Title = "Favorite Only",
+    Default = false,
+    Flag = "FavoriteOnlyToggle",
+    Callback = function(value)
+        _G.FavoriteOnly = value
+    end
+})
+
+EventTab:Divider()
+
+-- Auto XP: safe GetProgress + PressAndVerifyXP
+_G.AutoXPActive = false
+
+local function GetProgress()
+    local ScriptedMap = Workspace:FindFirstChild("ScriptedMap")
+    local MutationMachine = ScriptedMap and ScriptedMap:FindFirstChild("MutationMachine")
+    local UIBAR = MutationMachine and MutationMachine:FindFirstChild("UIBAR")
+    local GUI = UIBAR and UIBAR:FindFirstChild("GUI")
+    local Progress = GUI and GUI:FindFirstChild("Progress")
+    local ProgressLabel = Progress and Progress:FindFirstChild("Progress_Amount")
+
+    if ProgressLabel and ProgressLabel:IsA("TextLabel") and ProgressLabel.Text then
+        local cur, max = string.match(ProgressLabel.Text, "(%d+)/(%d+)")
+        if cur and max then
+            return tonumber(cur), tonumber(max)
+        end
+    end
+    return nil, nil
+end
+
+local function PressAndVerifyXP(rootPart)
+    if not rootPart then return false end
+    local expectedText = "Add XP"
+    local actionText = getProximityActionText()
+    if not (actionText and actionText == expectedText) then return false end
+
+    local ScriptedMap = Workspace:FindFirstChild("ScriptedMap")
+    local MutationMachine = ScriptedMap and ScriptedMap:FindFirstChild("MutationMachine")
+    local UIBAR = MutationMachine and MutationMachine:FindFirstChild("UIBAR")
+    local prompt = UIBAR and UIBAR:FindFirstChild("XPPrompt")
+
+    if not (prompt and prompt:IsA("ProximityPrompt") and prompt.Enabled) then
+        return false
+    end
+
+    while _G.AutoXPActive do
+        if not safeInputHold(prompt) then return false end
+
+        local success = false
+        local startTime = tick()
+        while tick() - startTime < 3 do
+            if not _G.AutoXPActive then return false end
+            if not prompt.Enabled then
+                success = true
+                break
+            end
+            task.wait(0.1)
+        end
+
+        if success then return true end
+    end
+    return false
+end
+
+local AutoAddEXP = EventTab:Toggle({
+    Title = "Auto Add XP",
+    Desc = "Auto Add exp",
+    Default = false,
+    Flag = "AutoAddXP",
+    Callback = function(value)
+        _G.AutoXPActive = value
+        if not _G.AutoXPActive then return end
+
+        task.spawn(function()
+            while _G.AutoXPActive do
+                local WaitTime = 1
+                local Character = LocalPlayer and LocalPlayer.Character
+                local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+                local HumanoidRootPart = Character and Character:FindFirstChild("HumanoidRootPart")
+
+                if not (Character and Humanoid and HumanoidRootPart and Humanoid.Health > 0) then
+                    task.wait(WaitTime)
+                    continue
+                end
+
+                local current, max = GetProgress()
+                if current and max and current < max then
+                    WaitTime = 0.2
+                    HumanoidRootPart.CFrame = CFrame_XP
+
+                    local expTools = {}
+                    local backpack = LocalPlayer and LocalPlayer:FindFirstChild("Backpack")
+                    if backpack then
+                        for _, tool in ipairs(backpack:GetChildren()) do
+                            if tool:IsA("Tool") and string.find(tool.Name or "", "EXP") then
+                                table.insert(expTools, tool)
+                            end
+                        end
+                    end
+
+                    if #expTools > 0 then
+                        local toolToEquip = expTools[math.random(1, #expTools)]
+                        pcall(function() Humanoid:EquipTool(toolToEquip) end)
+                        task.wait(0.5)
+                        task.wait(0.8)
+
+                        while _G.AutoXPActive do
+                            current, max = GetProgress()
+                            if not (current and max and current < max) then break end
+
+                            local pressSuccess = PressAndVerifyXP(HumanoidRootPart)
+                            if not pressSuccess then break end
+
+                            task.wait(0.5)
+                        end
+                    else
+                        -- no EXP tool found
+                    end
+                end
+
+                task.wait(WaitTime)
+            end
+        end)
+    end
+})
+
+-- Auto Reset toggle (unchanged but safe refs)
+_G.AutoResetActive = false
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+local AutoResetMergeMadnessEvent = EventTab:Toggle({
+    Title = "Auto Reset Merge Madness Event",
+    Desc = "Auto Reset Event",
+    Default = false,
+    Flag = "AutoResetToggle",
+    Callback = function(value)
+        _G.AutoResetActive = value
+        if not _G.AutoResetActive then return end
+
+        task.spawn(function()
+            while _G.AutoResetActive do
+                local WaitTime = 0.5
+
+                local playerGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+                local Main = playerGui and playerGui:FindFirstChild("Main")
+                local Billboard = Main and Main:FindFirstChild("Billboard")
+                local Main_Complete = Billboard and Billboard:FindFirstChild("Main_Complete")
+
+                if Main_Complete and Main_Complete.Visible == true then
+                    task.wait(1)
+                    local InteractRemote = ReplicatedStorage:FindFirstChild("Remotes")
+                        and ReplicatedStorage.Remotes:FindFirstChild("Events")
+                        and ReplicatedStorage.Remotes.Events:FindFirstChild("MutationMania")
+                        and ReplicatedStorage.Remotes.Events.MutationMania:FindFirstChild("Interact")
+
+                    if InteractRemote and _G.AutoResetActive then
+                        local args = { [1] = "ResetRequest" }
+                        pcall(function() InteractRemote:FireServer(unpack(args)) end)
+                        WaitTime = 5
+                    end
+                end
+
+                task.wait(WaitTime)
+            end
+        end)
+    end
+})
+
+-- End of patch
+
 local SettingTab = Window:Tab("Settings", "rbxassetid://128706247346129")
 
 SettingTab:Section("Performance")
