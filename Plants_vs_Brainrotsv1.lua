@@ -2377,65 +2377,6 @@ local MissionBrainrotKillAuraToggle = EventTab:Toggle({
 
 EventTab:Section("Merge Madness Event")
 
-_G.AutoResetActive = false
-
-local AutoResetToggle = EventTab:Toggle({
-    Title = "Auto Reset Merge Madness Event",
-    Desc = "เมื่อ 'Main_Complete' ปรากฏ จะรีเซ็ตอัตโนมัติ",
-    Default = false,
-    Flag = "AutoResetToggle",
-    
-    Callback = function(value)
-        _G.AutoResetActive = value
-        if not _G.AutoResetActive then return end
-
-        task.spawn(function()
-            local Players = game:GetService("Players")
-            local ReplicatedStorage = game:GetService("ReplicatedStorage")
-            local LocalPlayer = Players.LocalPlayer
-
-            while _G.AutoResetActive do
-                local success, err = pcall(function()
-                    local WaitTime = 0.5 
-
-                    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-                    if not playerGui then return end
-
-                    local Main = playerGui:FindFirstChild("Main")
-                    if not Main then return end
-
-                    local Billboard = Main:FindFirstChild("Billboard")
-                    if not Billboard then return end
-
-                    local Main_Complete = Billboard:FindFirstChild("Main_Complete")
-                    if not Main_Complete then return end
-
-                    if Main_Complete.Visible == true then
-                        task.wait(1)
-
-                        local InteractRemote = ReplicatedStorage:FindFirstChild("Remotes")
-                            and ReplicatedStorage.Remotes:FindFirstChild("Events")
-                            and ReplicatedStorage.Remotes.Events:FindFirstChild("MutationMania")
-                            and ReplicatedStorage.Remotes.Events.MutationMania:FindFirstChild("Interact")
-
-                        if InteractRemote and _G.AutoResetActive then
-                            InteractRemote:FireServer("ResetRequest")
-                            WaitTime = 5
-                        end
-                    end
-
-                    task.wait(WaitTime)
-                end)
-
-                if not success then
-                    warn("[AutoReset] Caught Error:", err)
-                    task.wait(1)
-                end
-            end
-        end)
-    end
-})
-
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
