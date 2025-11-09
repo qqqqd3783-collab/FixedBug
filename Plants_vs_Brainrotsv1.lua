@@ -2377,6 +2377,52 @@ local MissionBrainrotKillAuraToggle = EventTab:Toggle({
 
 EventTab:Section("Merge Madness Event")
 
+_G.AutoResetActive = false
+
+local AutoResetToggle = EventTab:Toggle({
+    Title = "Auto Reset Merge Madness Event",
+    Desc = "เมื่อ 'Main_Complete' ปรากฏ จะรีเซ็ตอัตโนมัติ",
+    Default = false,
+    Flag = "AutoResetToggle",
+    
+    Callback = function(value)
+        _G.AutoResetActive = value
+        if not _G.AutoResetActive then return end
+
+        task.spawn(function()
+            while _G.AutoResetActive do
+                local WaitTime = 0.5 
+                
+                local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+                local Main = playerGui and playerGui:FindFirstChild("Main")
+                local Billboard = Main and Main:FindFirstChild("Billboard")
+                local Main_Complete = Billboard and Billboard:FindFirstChild("Main_Complete")
+
+                if Main_Complete and Main_Complete.Visible == true then
+                    
+                    task.wait(1)
+                    
+                    local InteractRemote = ReplicatedStorage:FindFirstChild("Remotes")
+                        and ReplicatedStorage.Remotes:FindFirstChild("Events")
+                        and ReplicatedStorage.Remotes.Events:FindFirstChild("MutationMania")
+                        and ReplicatedStorage.Remotes.Events.MutationMania:FindFirstChild("Interact")
+
+                    if InteractRemote and _G.AutoResetActive then
+                        local args = {
+                            [1] = "ResetRequest"
+                        }
+                        InteractRemote:FireServer(unpack(args))
+                        
+                        WaitTime = 5 
+                    end
+                end
+                
+                task.wait(WaitTime)
+            end
+        end)
+    end
+})
+
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
@@ -2729,52 +2775,6 @@ local FavoriteOnlyToggle = EventTab:Toggle({
     Flag = "FavoriteOnlyToggle",
     Callback = function(value)
         _G.FavoriteOnly = value
-    end
-})
-
-_G.AutoResetActive = false
-
-local AutoResetToggle = EventTab:Toggle({
-    Title = "Auto Reset Merge Madness Event",
-    Desc = "เมื่อ 'Main_Complete' ปรากฏ จะรีเซ็ตอัตโนมัติ",
-    Default = false,
-    Flag = "AutoResetToggle",
-    
-    Callback = function(value)
-        _G.AutoResetActive = value
-        if not _G.AutoResetActive then return end
-
-        task.spawn(function()
-            while _G.AutoResetActive do
-                local WaitTime = 0.5 
-                
-                local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-                local Main = playerGui and playerGui:FindFirstChild("Main")
-                local Billboard = Main and Main:FindFirstChild("Billboard")
-                local Main_Complete = Billboard and Billboard:FindFirstChild("Main_Complete")
-
-                if Main_Complete and Main_Complete.Visible == true then
-                    
-                    task.wait(1)
-                    
-                    local InteractRemote = ReplicatedStorage:FindFirstChild("Remotes")
-                        and ReplicatedStorage.Remotes:FindFirstChild("Events")
-                        and ReplicatedStorage.Remotes.Events:FindFirstChild("MutationMania")
-                        and ReplicatedStorage.Remotes.Events.MutationMania:FindFirstChild("Interact")
-
-                    if InteractRemote and _G.AutoResetActive then
-                        local args = {
-                            [1] = "ResetRequest"
-                        }
-                        InteractRemote:FireServer(unpack(args))
-                        
-                        WaitTime = 5 
-                    end
-                end
-                
-                task.wait(WaitTime)
-            end
-        end)
     end
 })
 
