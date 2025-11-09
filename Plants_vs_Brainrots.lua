@@ -2377,6 +2377,335 @@ local MissionBrainrotKillAuraToggle = EventTab:Toggle({
 
 EventTab:Section("Merge Madness Event")
 
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService") 
+
+local CFrame_Pos1 = CFrame.new(-184.19, 11.76, 1026.13)
+local CFrame_Pos2 = CFrame.new(-173.69, 11.76, 1026.09)
+local CFrame_Mix = CFrame.new(-194.42, 11.76, 1027.23) 
+
+_G.CycleStep = "FindPair" 
+_G.CyclePair_B = nil 
+_G.ToolA_ModelName = nil
+_G.ToolB_ModelName = nil
+_G.FavoriteOnly = false 
+local usedMutations = {} 
+
+local function isToolFavorited(tool)
+    local playerGui = LocalPlayer.PlayerGui 
+    if not playerGui then return false end
+    local hotbarSlots = UserInputService.TouchEnabled and 6 or 10
+    local hotbar = playerGui:FindFirstChild("BackpackGui", true) and playerGui.BackpackGui.Backpack:FindFirstChild("Hotbar")
+    if hotbar then
+        for i = 1, hotbarSlots do
+            local slot = hotbar:FindFirstChild(tostring(i))
+            local toolNameLabel = slot and slot:FindFirstChild("ToolName")
+            if toolNameLabel and toolNameLabel.Text ~= "" and toolNameLabel.Text == tool.Name then
+                if slot:FindFirstChild("HeartIcon") then return true end
+            end
+        end
+    end
+    local inventoryFrame = playerGui:FindFirstChild("BackpackGui", true) and playerGui.BackpackGui.Backpack.Inventory.ScrollingFrame:FindFirstChild("UIGridFrame")
+    if inventoryFrame then
+        for _, itemSlot in ipairs(inventoryFrame:GetChildren()) do
+            if itemSlot:IsA("TextButton") then
+                local toolNameLabel = itemSlot:FindFirstChild("ToolName")
+                if toolNameLabel and toolNameLabel.Text ~= "" and toolNameLabel.Text == tool.Name then
+                    if itemSlot:FindFirstChild("HeartIcon") then return true end
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function GetToolInfo(tool, blacklist)
+    if not tool:IsA("Tool") then return nil end
+    
+    local isFavorite = isToolFavorited(tool)
+    if _G.FavoriteOnly then
+        if not isFavorite then return nil end
+    else
+        if isFavorite then return nil end
+    end
+
+    if string.find(tool.Name, "-") then
+        return nil
+    end
+
+    local modelName = tool:GetAttribute("Brainrot") or tool:GetAttribute("Plant")
+    if not (modelName and modelName ~= "") then
+        return nil
+    end
+    
+    local Model = tool:FindFirstChild(modelName)
+    if not (Model and Model:IsA("Model")) then 
+        return nil 
+    end
+    
+    local MutationAtt = Model:GetAttribute("Mutation")
+    
+    if not (MutationAtt ~= nil and MutationAtt ~= "") then 
+        return nil 
+    end
+    
+    if blacklist[MutationAtt] then
+        return nil
+    end
+    
+    return { Tool = tool, ModelName = Model.Name, Mutation = MutationAtt }
+end
+
+local function CheckAndFirePrompt(humanoid, rootPart, expectedText, toolInfo)
+    if not rootPart then return false end
+    
+    local ActionTextLabel = LocalPlayer.PlayerGui:FindFirstChild("ProximityPrompts")
+        and LocalPlayer.PlayerGui.ProximityPrompts:FindFirstChild("Default")
+        and LocalPlayer.PlayerGui.ProximityPrompts.Default:FindFirstChild("PromptFrame")
+        and LocalPlayer.PlayerGui.ProximityPrompts.Default.PromptFrame:FindFirstChild("ActionText")
+
+    if not (ActionTextLabel and ActionTextLabel:IsA("TextLabel")) then
+        return false
+    end
+    
+    if ActionTextLabel.Text == expectedText then
+        local prompt = nil
+        
+        for attempt = 1, 10 do
+            for _, instance in ipairs(Workspace:GetDescendants()) do
+                if instance:IsA("ProximityPrompt") and instance.Enabled then
+                    local targetPart = instance.Parent
+                    if targetPart and targetPart:IsA("BasePart") then
+                        if (targetPart.Position - rootPart.Position).Magnitude <= instance.MaxActivationDistance then
+                            prompt = instance
+                            break
+                        end
+                    end
+                end
+            end
+            if prompt then break else task.wait(0.1) end
+        end
+
+        if not prompt then
+            return false
+        end
+
+        while _G.AutoMutateActive do
+            prompt:InputHoldBegin()
+            task.wait(prompt.HoldDuration)
+            prompt:InputHoldEnd()
+            
+            local success = false
+            local startTime = tick()
+            while tick() - startTime < 3 do
+                if not _G.AutoMutateActive then return false end
+
+                if toolInfo then
+                    if not humanoid.Parent:FindFirstChild(toolInfo.Tool.Name) then
+                        success = true
+                        break
+                    end
+                else
+                    if not prompt.Enabled then
+                        success = true
+                        break
+                    end
+                end
+                task.wait(0.1)
+            end
+
+            if success then
+                return true
+            else
+            end
+        end
+        
+    else
+        return false
+    end
+end
+
+local function CheckMachineModels(modelNameA, modelNameB)
+    local MutationMachine = Workspace:FindFirstChild("ScriptedMap")
+        and Workspace.ScriptedMap:FindFirstChild("MutationMachine")
+    
+    if MutationMachine and modelNameA and modelNameB then
+        local foundA = MutationMachine:FindFirstChild(modelNameA)
+        local foundB = MutationMachine:FindFirstChild(modelNameB)
+        
+        if (foundA and foundA:IsA("Model")) and (foundB and foundB:IsA("Model")) then
+            return true
+        end
+    end
+    return false
+end
+
+local function Perform_Action_A(infoA, humanoid, rootPart)
+    humanoid:EquipTool(infoA.Tool)
+    task.wait(0.2)
+    rootPart.CFrame = CFrame_Pos1
+    task.wait(1.0) 
+    CheckAndFirePrompt(humanoid, rootPart, "Place Plant or Brainrot", infoA) 
+    task.wait(0.5) 
+end
+
+local function Perform_Action_B(infoB, humanoid, rootPart)
+    humanoid:EquipTool(infoB.Tool)
+    task.wait(0.2)
+    rootPart.CFrame = CFrame_Pos2
+    task.wait(1.0) 
+    CheckAndFirePrompt(humanoid, rootPart, "Place Plant or Brainrot", infoB) 
+    task.wait(0.5) 
+end
+
+local function Perform_Action_Mix(humanoid, rootPart)
+    humanoid:UnequipTools() 
+    task.wait(0.2)
+    rootPart.CFrame = CFrame_Mix 
+    task.wait(1.0) 
+    CheckAndFirePrompt(humanoid, rootPart, "Mix", nil) 
+    task.wait(0.5) 
+end
+
+_G.AutoMutateActive = false
+
+local AutoPairToggle = EventTab:Toggle({
+    Title = "Auto Pair, Place & Mix",
+    Desc = "หาคู่, วาง 2 จุด, และผสม",
+    Default = false,
+    Flag = "AutoMutateToggle", 
+    
+    Callback = function(value)
+        _G.AutoMutateActive = value
+        if not _G.AutoMutateActive then 
+            _G.CycleStep = "FindPair"
+            _G.CyclePair_B = nil
+            _G.ToolA_ModelName = nil
+            _G.ToolB_ModelName = nil
+            usedMutations = {}
+            return 
+        end
+        
+        _G.CycleStep = "FindPair"
+        _G.CyclePair_B = nil
+        _G.ToolA_ModelName = nil
+        _G.ToolB_ModelName = nil
+        usedMutations = {}
+
+        task.spawn(function()
+            while _G.AutoMutateActive do
+                local WaitTime = 1 
+                local Character = LocalPlayer.Character
+                local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+                local HumanoidRootPart = Character and Character:FindFirstChild("HumanoidRootPart")
+
+                if not (Character and Humanoid and HumanoidRootPart and Humanoid.Health > 0) then
+                    task.wait(WaitTime)
+                    continue 
+                end
+                
+                local TimerLabel = nil 
+                local ScriptedMap = Workspace:FindFirstChild("ScriptedMap")
+                local MutationMachine = ScriptedMap and ScriptedMap:FindFirstChild("MutationMachine")
+                local UI_Attachment = MutationMachine and MutationMachine:FindFirstChild("UI")
+                local GUI_Billboard = UI_Attachment and UI_Attachment:FindFirstChild("GUI")
+                if GUI_Billboard then TimerLabel = GUI_Billboard:FindFirstChild("Timer") end
+
+                local isMachineReady = false
+                if TimerLabel and TimerLabel:IsA("TextLabel") then
+                    if TimerLabel.Text == "~ Mutate plants or brainrots! ~" then
+                        isMachineReady = true
+                    end
+                else
+                end
+
+                if isMachineReady then
+                    WaitTime = 0.2 
+                    
+                    if _G.CycleStep == "FindPair" then
+                        
+                        local validTools = {}
+                        local backpackTools = LocalPlayer.Backpack:GetChildren()
+                        
+                        for i = 1, #backpackTools do
+                            local info = GetToolInfo(backpackTools[i], usedMutations)
+                            if info then
+                                table.insert(validTools, info)
+                            end
+                        end
+                        
+                        local pairFound = false
+                        for i = 1, #validTools do
+                            local infoA = validTools[i]
+                            
+                            for j = i + 1, #validTools do
+                                local infoB = validTools[j]
+                                
+                                if infoA.ModelName == infoB.ModelName and infoA.Mutation ~= infoB.Mutation then
+                                    Perform_Action_A(infoA, Humanoid, HumanoidRootPart)
+                                    usedMutations[infoA.Mutation] = true
+                                    _G.CyclePair_B = infoB
+                                    _G.ToolA_ModelName = infoA.ModelName 
+                                    _G.ToolB_ModelName = infoB.ModelName 
+                                    _G.CycleStep = "PlaceB" 
+                                    pairFound = true
+                                    break 
+                                end
+                            end
+                            if pairFound then break end
+                        end
+                        
+                    elseif _G.CycleStep == "PlaceB" then
+                        if _G.CyclePair_B then
+                            Perform_Action_B(_G.CyclePair_B, Humanoid, HumanoidRootPart)
+                            usedMutations[_G.CyclePair_B.Mutation] = true
+                            _G.CyclePair_B = nil
+                            _G.CycleStep = "Mix" 
+                        else
+                            _G.CycleStep = "FindPair"
+                        end
+                        
+                    elseif _G.CycleStep == "Mix" then
+                        if CheckMachineModels(_G.ToolA_ModelName, _G.ToolB_ModelName) then
+                            Perform_Action_Mix(Humanoid, HumanoidRootPart)
+                            _G.CycleStep = "WaitingForReset"
+                        else
+                        end
+                        
+                    elseif _G.CycleStep == "WaitingForReset" then
+                    end
+                    
+                else
+                    if _G.CycleStep ~= "FindPair" then
+                        _G.CycleStep = "FindPair"
+                        _G.CyclePair_B = nil
+                        _G.ToolA_ModelName = nil 
+                        _G.ToolB_ModelName = nil 
+                        usedMutations = {}
+                    end
+                end
+                
+                task.wait(WaitTime)
+                
+            end 
+        end)
+    end
+})
+
+EventTab:Divider()
+
+local FavoriteOnlyToggle = EventTab:Toggle({
+    Title = "Favorite Only",
+    Desc = "ON: ใช้เฉพาะตัวที่ติดดาว | OFF: ใช้เฉพาะตัวที่ไม่ติดดาว",
+    Default = false,
+    Flag = "FavoriteOnlyToggle",
+    Callback = function(value)
+        _G.FavoriteOnly = value
+    end
+})
+
 local SettingTab = Window:Tab("Settings", "rbxassetid://128706247346129")
 
 SettingTab:Section("Performance")
