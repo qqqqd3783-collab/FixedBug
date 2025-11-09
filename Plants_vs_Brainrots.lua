@@ -2492,35 +2492,30 @@ local function CheckAndFirePrompt(humanoid, rootPart, expectedText, toolInfo)
             return false
         end
 
-        while _G.AutoMutateActive do
-            prompt:InputHoldBegin()
-            task.wait(prompt.HoldDuration)
-            prompt:InputHoldEnd()
-            
-            local success = false
-            local startTime = tick()
-            while tick() - startTime < 3 do
-                if not _G.AutoMutateActive then return false end
+        prompt:InputHoldBegin()
+        task.wait(prompt.HoldDuration)
+        prompt:InputHoldEnd()
+        
+        local success = false
+        local startTime = tick()
+        while tick() - startTime < 3 do
+            if not _G.AutoMutateActive then return false end
 
-                if toolInfo then
-                    if not humanoid.Parent:FindFirstChild(toolInfo.Tool.Name) then
-                        success = true
-                        break
-                    end
-                else
-                    if not prompt.Enabled then
-                        success = true
-                        break
-                    end
+            if toolInfo then
+                if not humanoid.Parent:FindFirstChild(toolInfo.Tool.Name) then
+                    success = true
+                    break
                 end
-                task.wait(0.1)
-            end
-
-            if success then
-                return true
             else
+                if not prompt.Enabled then
+                    success = true
+                    break
+                end
             end
+            task.wait(0.1)
         end
+
+        return success
         
     else
         return false
@@ -2542,37 +2537,80 @@ local function CheckMachineModels(modelNameA, modelNameB)
     return false
 end
 
+local function GetTimerText()
+    local TimerLabel = nil 
+    local ScriptedMap = Workspace:FindFirstChild("ScriptedMap")
+    local MutationMachine = ScriptedMap and ScriptedMap:FindFirstChild("MutationMachine")
+    local UI_Attachment = MutationMachine and MutationMachine:FindFirstChild("UI")
+    local GUI_Billboard = UI_Attachment and UI_Attachment:FindFirstChild("GUI")
+    if GUI_Billboard then TimerLabel = GUI_Billboard:FindFirstChild("Timer") end
+
+    if TimerLabel and TimerLabel:IsA("TextLabel") then
+        return TimerLabel.Text
+    end
+    return "" 
+end
+
 local function Perform_Action_A(infoA, humanoid, rootPart)
     humanoid:EquipTool(infoA.Tool)
     task.wait(0.2)
-    rootPart.CFrame = CFrame_Pos1
-    task.wait(1.0) 
-    CheckAndFirePrompt(humanoid, rootPart, "Place Plant or Brainrot", infoA) 
+    
+    while _G.AutoMutateActive do
+        rootPart.CFrame = CFrame_Pos1
+        task.wait(1.0) 
+        local success = CheckAndFirePrompt(humanoid, rootPart, "Place Plant or Brainrot", infoA) 
+        
+        if success then 
+            break 
+        else
+            task.wait(0.5)
+        end
+    end
+    
     task.wait(0.5) 
 end
 
 local function Perform_Action_B(infoB, humanoid, rootPart)
     humanoid:EquipTool(infoB.Tool)
     task.wait(0.2)
-    rootPart.CFrame = CFrame_Pos2
-    task.wait(1.0) 
-    CheckAndFirePrompt(humanoid, rootPart, "Place Plant or Brainrot", infoB) 
+
+    while _G.AutoMutateActive do
+        rootPart.CFrame = CFrame_Pos2
+        task.wait(1.0) 
+        local success = CheckAndFirePrompt(humanoid, rootPart, "Place Plant or Brainrot", infoB) 
+        
+        if success then 
+            break 
+        else
+            task.wait(0.5)
+        end
+    end
+    
     task.wait(0.5) 
 end
 
 local function Perform_Action_Mix(humanoid, rootPart)
     humanoid:UnequipTools() 
     task.wait(0.2)
-    rootPart.CFrame = CFrame_Mix 
-    task.wait(1.0) 
-    CheckAndFirePrompt(humanoid, rootPart, "Mix", nil) 
+    
+    while _G.AutoMutateActive do
+        rootPart.CFrame = CFrame_Mix 
+        task.wait(1.0) 
+        
+        local success = CheckAndFirePrompt(humanoid, rootPart, "Mix", nil) 
+        
+        if success then 
+            break 
+        end
+    end
+
     task.wait(0.5) 
 end
 
 _G.AutoMutateActive = false
 
 local AutoPairToggle = EventTab:Toggle({
-    Title = "Auto Pair, Place & Mix",
+    Title = "Auto Merge Madness Event",
     Desc = "หาคู่, วาง 2 จุด, และผสม",
     Default = false,
     Flag = "AutoMutateToggle", 
@@ -2606,19 +2644,9 @@ local AutoPairToggle = EventTab:Toggle({
                     continue 
                 end
                 
-                local TimerLabel = nil 
-                local ScriptedMap = Workspace:FindFirstChild("ScriptedMap")
-                local MutationMachine = ScriptedMap and ScriptedMap:FindFirstChild("MutationMachine")
-                local UI_Attachment = MutationMachine and MutationMachine:FindFirstChild("UI")
-                local GUI_Billboard = UI_Attachment and UI_Attachment:FindFirstChild("GUI")
-                if GUI_Billboard then TimerLabel = GUI_Billboard:FindFirstChild("Timer") end
-
                 local isMachineReady = false
-                if TimerLabel and TimerLabel:IsA("TextLabel") then
-                    if TimerLabel.Text == "~ Mutate plants or brainrots! ~" then
-                        isMachineReady = true
-                    end
-                else
+                if GetTimerText() == "~ Mutate plants or brainrots! ~" then
+                    isMachineReady = true
                 end
 
                 if isMachineReady then
@@ -2694,8 +2722,6 @@ local AutoPairToggle = EventTab:Toggle({
     end
 })
 
-EventTab:Divider()
-
 local FavoriteOnlyToggle = EventTab:Toggle({
     Title = "Favorite Only",
     Desc = "ON: ใช้เฉพาะตัวที่ติดดาว | OFF: ใช้เฉพาะตัวที่ไม่ติดดาว",
@@ -2703,6 +2729,199 @@ local FavoriteOnlyToggle = EventTab:Toggle({
     Flag = "FavoriteOnlyToggle",
     Callback = function(value)
         _G.FavoriteOnly = value
+    end
+})
+
+EventTab:Divider()
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local CFrame_XP = CFrame.new(-151.39, 11.76, 1028.88)
+
+_G.AutoXPActive = false
+
+local function GetProgress()
+    local ScriptedMap = Workspace:FindFirstChild("ScriptedMap")
+    local MutationMachine = ScriptedMap and ScriptedMap:FindFirstChild("MutationMachine")
+    local UIBAR = MutationMachine and MutationMachine:FindFirstChild("UIBAR")
+    local GUI = UIBAR and UIBAR:FindFirstChild("GUI")
+    local Progress = GUI and GUI:FindFirstChild("Progress")
+    local ProgressLabel = Progress and Progress:FindFirstChild("Progress_Amount")
+    
+    if ProgressLabel and ProgressLabel:IsA("TextLabel") and ProgressLabel.Text then
+        local cur, max = string.match(ProgressLabel.Text, "(%d+)/(%d+)")
+        if cur and max then
+            return tonumber(cur), tonumber(max)
+        end
+    end
+    return nil, nil 
+end
+
+local function PressAndVerifyXP(rootPart)
+    if not rootPart then return false end
+    local expectedText = "Add XP"
+    
+    local ActionTextLabel = LocalPlayer.PlayerGui:FindFirstChild("ProximityPrompts")
+        and LocalPlayer.PlayerGui.ProximityPrompts:FindFirstChild("Default")
+        and LocalPlayer.PlayerGui.ProximityPrompts.Default:FindFirstChild("PromptFrame")
+        and LocalPlayer.PlayerGui.ProximityPrompts.Default.PromptFrame:FindFirstChild("ActionText")
+
+    if not (ActionTextLabel and ActionTextLabel:IsA("TextLabel") and ActionTextLabel.Text == expectedText) then
+        return false 
+    end
+
+    local ScriptedMap = Workspace:FindFirstChild("ScriptedMap")
+    local MutationMachine = ScriptedMap and ScriptedMap:FindFirstChild("MutationMachine")
+    local UIBAR = MutationMachine and MutationMachine:FindFirstChild("UIBAR")
+    local prompt = UIBAR and UIBAR:FindFirstChild("XPPrompt")
+
+    if not (prompt and prompt:IsA("ProximityPrompt")) then
+        return false 
+    end
+    
+    if not prompt.Enabled then
+         return false
+    end
+
+    while _G.AutoXPActive do 
+        prompt:InputHoldBegin() 
+        task.wait(prompt.HoldDuration)
+        prompt:InputHoldEnd()
+        
+        local success = false
+        local startTime = tick()
+        while tick() - startTime < 3 do
+            if not _G.AutoXPActive then return false end
+
+            if not prompt.Enabled then
+                success = true
+                break
+            end
+            task.wait(0.1)
+        end
+
+        if success then
+            return true
+        else
+        end
+    end
+    return false
+end
+
+local AutoAddXPToggle = EventTab:Toggle({
+    Title = "Auto Add XP",
+    Desc = "วาปและกด 'Add XP' จนกว่าจะเต็ม",
+    Default = false,
+    Flag = "AutoAddXP", 
+    
+    Callback = function(value)
+        _G.AutoXPActive = value
+        if not _G.AutoXPActive then 
+            return 
+        end
+
+        task.spawn(function()
+            while _G.AutoXPActive do
+                local WaitTime = 1 
+                
+                local Character = LocalPlayer.Character
+                local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+                local HumanoidRootPart = Character and Character:FindFirstChild("HumanoidRootPart")
+
+                if not (Character and Humanoid and HumanoidRootPart and Humanoid.Health > 0) then
+                    task.wait(WaitTime)
+                    continue 
+                end
+                
+                local current, max = GetProgress()
+                
+                if current and max and current < max then
+                    WaitTime = 0.2 
+                    
+                    HumanoidRootPart.CFrame = CFrame_XP
+                    
+                    local expTools = {}
+                    for _, tool in ipairs(LocalPlayer.Backpack:GetChildren()) do
+                        if tool:IsA("Tool") and string.find(tool.Name, "EXP") then
+                            table.insert(expTools, tool)
+                        end
+                    end
+
+                    if #expTools > 0 then
+                        local toolToEquip = expTools[math.random(1, #expTools)]
+                        Humanoid:EquipTool(toolToEquip)
+                        task.wait(0.5) 
+
+                        task.wait(1.0) 
+
+                        while _G.AutoXPActive and current and max and current < max do
+                            local pressSuccess = PressAndVerifyXP(HumanoidRootPart)
+                            
+                            if not pressSuccess then
+                                break
+                            end
+                            
+                            task.wait(0.5) 
+                            
+                            current, max = GetProgress()
+                        end
+                    else
+                    end
+                else
+                end
+                
+                task.wait(WaitTime)
+            end
+        end)
+    end
+})
+
+_G.AutoResetActive = false
+
+local AutoResetToggle = EventTab:Toggle({
+    Title = "Auto Reset Merge Madness Event",
+    Desc = "เมื่อ 'Main_Complete' ปรากฏ จะรีเซ็ตอัตโนมัติ",
+    Default = false,
+    Flag = "AutoResetToggle",
+    
+    Callback = function(value)
+        _G.AutoResetActive = value
+        if not _G.AutoResetActive then return end
+
+        task.spawn(function()
+            while _G.AutoResetActive do
+                local WaitTime = 0.5 
+                
+                local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+                local Main = playerGui and playerGui:FindFirstChild("Main")
+                local Billboard = Main and Main:FindFirstChild("Billboard")
+                local Main_Complete = Billboard and Billboard:FindFirstChild("Main_Complete")
+
+                if Main_Complete and Main_Complete.Visible == true then
+                    
+                    task.wait(1)
+                    
+                    local InteractRemote = ReplicatedStorage:FindFirstChild("Remotes")
+                        and ReplicatedStorage.Remotes:FindFirstChild("Events")
+                        and ReplicatedStorage.Remotes.Events:FindFirstChild("MutationMania")
+                        and ReplicatedStorage.Remotes.Events.MutationMania:FindFirstChild("Interact")
+
+                    if InteractRemote and _G.AutoResetActive then
+                        local args = {
+                            [1] = "ResetRequest"
+                        }
+                        InteractRemote:FireServer(unpack(args))
+                        
+                        WaitTime = 5 
+                    end
+                end
+                
+                task.wait(WaitTime)
+            end
+        end)
     end
 })
 
