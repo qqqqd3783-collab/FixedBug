@@ -2732,143 +2732,44 @@ local FavoriteOnlyToggle = EventTab:Toggle({
     end
 })
 
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local LocalPlayer = Players.LocalPlayer
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+_G.AutoResetActive = false
 
-local CFrame_XP = CFrame.new(-151.39, 11.76, 1028.88)
-
-_G.AutoXPActive = false
-
-local function GetProgress()
-    local ScriptedMap = Workspace:FindFirstChild("ScriptedMap")
-    local MutationMachine = ScriptedMap and ScriptedMap:FindFirstChild("MutationMachine")
-    local UIBAR = MutationMachine and MutationMachine:FindFirstChild("UIBAR")
-    local GUI = UIBAR and UIBAR:FindFirstChild("GUI")
-    local Progress = GUI and GUI:FindFirstChild("Progress")
-    local ProgressLabel = Progress and Progress:FindFirstChild("Progress_Amount")
-    
-    if ProgressLabel and ProgressLabel:IsA("TextLabel") and ProgressLabel.Text then
-        local cur, max = string.match(ProgressLabel.Text, "(%d+)/(%d+)")
-        if cur and max then
-            return tonumber(cur), tonumber(max)
-        end
-    end
-    return nil, nil 
-end
-
-local function PressAndVerifyXP(rootPart)
-    if not rootPart then return false end
-    local expectedText = "Add XP"
-    
-    local ActionTextLabel = LocalPlayer.PlayerGui:FindFirstChild("ProximityPrompts")
-        and LocalPlayer.PlayerGui.ProximityPrompts:FindFirstChild("Default")
-        and LocalPlayer.PlayerGui.ProximityPrompts.Default:FindFirstChild("PromptFrame")
-        and LocalPlayer.PlayerGui.ProximityPrompts.Default.PromptFrame:FindFirstChild("ActionText")
-
-    if not (ActionTextLabel and ActionTextLabel:IsA("TextLabel") and ActionTextLabel.Text == expectedText) then
-        return false 
-    end
-
-    local ScriptedMap = Workspace:FindFirstChild("ScriptedMap")
-    local MutationMachine = ScriptedMap and ScriptedMap:FindFirstChild("MutationMachine")
-    local UIBAR = MutationMachine and MutationMachine:FindFirstChild("UIBAR")
-    local prompt = UIBAR and UIBAR:FindFirstChild("XPPrompt")
-
-    if not (prompt and prompt:IsA("ProximityPrompt")) then
-        return false 
-    end
-    
-    if not prompt.Enabled then
-         return false
-    end
-
-    while _G.AutoXPActive do 
-        prompt:InputHoldBegin() 
-        task.wait(prompt.HoldDuration)
-        prompt:InputHoldEnd()
-        
-        local success = false
-        local startTime = tick()
-        while tick() - startTime < 3 do
-            if not _G.AutoXPActive then return false end
-
-            if not prompt.Enabled then
-                success = true
-                break
-            end
-            task.wait(0.1)
-        end
-
-        if success then
-            return true
-        else
-        end
-    end
-    return false
-end
-
-local AutoAddXPToggle = EventTab:Toggle({
-    Title = "Auto Add XP",
-    Desc = "วาปและกด 'Add XP' จนกว่าจะเต็ม",
+local AutoResetToggle = EventTab:Toggle({
+    Title = "Auto Reset Merge Madness Event",
+    Desc = "เมื่อ 'Main_Complete' ปรากฏ จะรีเซ็ตอัตโนมัติ",
     Default = false,
-    Flag = "AutoAddXP", 
+    Flag = "AutoResetToggle",
     
     Callback = function(value)
-        _G.AutoXPActive = value
-        if not _G.AutoXPActive then 
-            return 
-        end
+        _G.AutoResetActive = value
+        if not _G.AutoResetActive then return end
 
         task.spawn(function()
-            while _G.AutoXPActive do
-                local WaitTime = 1 
+            while _G.AutoResetActive do
+                local WaitTime = 0.5 
                 
-                local Character = LocalPlayer.Character
-                local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-                local HumanoidRootPart = Character and Character:FindFirstChild("HumanoidRootPart")
+                local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+                local Main = playerGui and playerGui:FindFirstChild("Main")
+                local Billboard = Main and Main:FindFirstChild("Billboard")
+                local Main_Complete = Billboard and Billboard:FindFirstChild("Main_Complete")
 
-                if not (Character and Humanoid and HumanoidRootPart and Humanoid.Health > 0) then
-                    task.wait(WaitTime)
-                    continue 
-                end
-                
-                local current, max = GetProgress()
-                
-                if current and max and current < max then
-                    WaitTime = 0.2 
+                if Main_Complete and Main_Complete.Visible == true then
                     
-                    HumanoidRootPart.CFrame = CFrame_XP
+                    task.wait(1)
                     
-                    local expTools = {}
-                    for _, tool in ipairs(LocalPlayer.Backpack:GetChildren()) do
-                        if tool:IsA("Tool") and string.find(tool.Name, "EXP") then
-                            table.insert(expTools, tool)
-                        end
+                    local InteractRemote = ReplicatedStorage:FindFirstChild("Remotes")
+                        and ReplicatedStorage.Remotes:FindFirstChild("Events")
+                        and ReplicatedStorage.Remotes.Events:FindFirstChild("MutationMania")
+                        and ReplicatedStorage.Remotes.Events.MutationMania:FindFirstChild("Interact")
+
+                    if InteractRemote and _G.AutoResetActive then
+                        local args = {
+                            [1] = "ResetRequest"
+                        }
+                        InteractRemote:FireServer(unpack(args))
+                        
+                        WaitTime = 5 
                     end
-
-                    if #expTools > 0 then
-                        local toolToEquip = expTools[math.random(1, #expTools)]
-                        Humanoid:EquipTool(toolToEquip)
-                        task.wait(0.5) 
-
-                        task.wait(1.0) 
-
-                        while _G.AutoXPActive and current and max and current < max do
-                            local pressSuccess = PressAndVerifyXP(HumanoidRootPart)
-                            
-                            if not pressSuccess then
-                                break
-                            end
-                            
-                            task.wait(0.5) 
-                            
-                            current, max = GetProgress()
-                        end
-                    else
-                    end
-                else
                 end
                 
                 task.wait(WaitTime)
